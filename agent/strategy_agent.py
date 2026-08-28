@@ -15,6 +15,13 @@ from schemas.trade_intent import (
     TradeIntent,
 )
 
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
+
 
 STRATEGY_SYSTEM_PROMPT = """
 You are an Elite Quantitative Trading & Options Strategist AI.
@@ -48,72 +55,76 @@ Output: MUST be a strict, single JSON object adhering exactly to the TradeIntent
 }
 
 ### Non-Negotiable Guardrails & Rules:
-1. LLM NEVER executes trades. LLM ONLY outputs structured TradeIntent JSON.
+1. LLM NEVER executes trades directly. LLM ONLY outputs structured TradeIntent JSON.
 2. Market Regime Strategy Guide:
    - BULLISH_TRENDING: Bull Call Spread (BUY call @ lower strike, SELL call @ higher strike) or Long Equity.
    - BEARISH_TRENDING: Bear Put Spread (BUY put @ higher strike, SELL put @ lower strike) or Long Put.
    - HIGH_VOLATILITY: Defined-Risk Spreads (Iron Condor or Credit Spread). NAKED short options are 100% PROHIBITED.
    - SIDEWAYS_CONSOLIDATION / LOW_VOLATILITY: Range-bound defined-risk spreads or Low Delta Bullish/Neutral Spreads.
 3. Defined-Risk Options Rule: Every SELL_TO_OPEN leg MUST have a corresponding protective BUY_TO_OPEN leg.
-4. Stop Loss:
-   - For BUY order: stop_loss < estimated_entry_price.
-   - For SELL order: stop_loss > estimated_entry_price.
+4. Stop Loss & Target:
+   - For BUY order: stop_loss < estimated_entry_price and target_price > estimated_entry_price.
+   - For Options Spreads: estimated_entry_price is net debit/credit per share, stop_loss is max loss threshold, target_price is profit target.
 5. Realistic Pricing: Expiration dates should be 20 to 45 days in the future.
-6. Return ONLY the raw JSON object. Do not include markdown preamble.
+6. Return ONLY the raw JSON object.
 """
 
 
 class StrategyAgent:
     """
-    AI-driven strategy formulation agent.
+    AI-driven strategy formulation agent using Google Gemini (google-genai SDK).
     Combines LLM intelligence with deterministic fallback to generate valid TradeIntent proposals.
     """
 
     def __init__(
         self,
-        model_name: str = "gpt-4o-mini",
+        model_name: str = "gemini-3.6-flash",
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
     ):
         load_dotenv()
         self.model_name = model_name
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
-        self.base_url = base_url or os.getenv("LLM_BASE_URL")
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
 
         self.client = None
-        if self.api_key:
+        if genai and self.api_key:
             try:
-                from openai import OpenAI
-                self.client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.base_url if self.base_url else None,
-                )
+                self.client = genai.Client(api_key=self.api_key)
             except Exception as e:
-                print(f"[StrategyAgent] Failed to initialize OpenAI client: {e}")
+                print(f"[StrategyAgent] Failed to initialize Google GenAI client: {e}")
                 self.client = None
 
     def generate_trade_intent(self, summary_dict: Dict[str, Any]) -> TradeIntent:
         """
         Formulate a TradeIntent proposal based on technical indicators and market regime.
         """
+        today_str = date.today().isoformat()
+        target_exp_str = (date.today() + timedelta(days=30)).isoformat()
         prompt_input = json.dumps(summary_dict, indent=2)
 
-        # 1. Try LLM Generation if client available
-        if self.client:
+        user_prompt = (
+            f"Today's Date: {today_str}.\n"
+            f"Target Expiration Date for Options (approx 30 days ahead): {target_exp_str}.\n"
+            f"Generate a quantitative trade proposal strictly matching TradeIntent schema for these market metrics:\n"
+            f"{prompt_input}"
+        )
+
+        # 1. Try LLM Generation via Google Gemini if client available
+        if self.client and types:
             try:
-                response = self.client.chat.completions.create(
+                response = self.client.models.generate_content(
                     model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": STRATEGY_SYSTEM_PROMPT},
-                        {"role": "user", "content": f"Generate a trade proposal for the following market metrics:\n{prompt_input}"},
-                    ],
-                    temperature=0.2,
-                    response_format={"type": "json_object"},
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=STRATEGY_SYSTEM_PROMPT,
+                        temperature=0.2,
+                        response_mime_type="application/json",
+                    ),
                 )
-                raw_content = response.choices[0].message.content
-                return self._parse_and_validate_json(raw_content)
+                raw_content = response.text
+                if raw_content:
+                    return self._parse_and_validate_json(raw_content)
             except Exception as e:
-                print(f"[StrategyAgent] LLM API call error ({e}). Engaging deterministic fallback generator...")
+                print(f"[StrategyAgent] Google GenAI API call error ({e}). Engaging deterministic fallback generator...")
 
         # 2. Resilient Deterministic Strategy Generator (Guaranteed valid TradeIntent)
         return self._generate_deterministic_proposal(summary_dict)
