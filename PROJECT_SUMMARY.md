@@ -4,7 +4,7 @@
 ---
 
 ## 1. Ikhtisar Proyek (Project Overview)
-Proyek ini membangun sistem trading kuantitatif terotomatisasi berbasis AI yang mengintegrasikan analisis data pasar historis, klasifikasi *market regime* (regim pasar), perumusan strategi trading oleh Large Language Model (LLM), gerbang risiko deterministik (*Hard Risk Gate*), eksekusi order ke broker **Alpaca Paper Trading**, manajemen posisi & *exit engine* otomatis, serta orkestrasi *autonomous runner* loop.
+Proyek ini membangun sistem trading kuantitatif terotomatisasi berbasis AI yang mengintegrasikan analisis data pasar historis, klasifikasi *market regime* (regim pasar), perumusan strategi trading oleh Large Language Model (LLM Google Gemini 2.5 Flash), gerbang risiko deterministik (*Hard Risk Gate*), eksekusi order ke broker **Alpaca Paper Trading**, manajemen posisi & *exit engine* otomatis, orkestrasi *autonomous runner* loop, serta **Interactive Streamlit Web Dashboard**.
 
 Sistem dirancang dengan arsitektur **multi-step pipeline terisolasi** di mana kecerdasan buatan (LLM) **tidak pernah mengeksekusi order secara langsung**, melainkan hanya bertindak sebagai perumus proposal order terstruktur dalam format JSON yang wajib melewati validasi skema dan aturan gerbang risiko 100% deterministik.
 
@@ -27,7 +27,7 @@ Sistem tunduk pada aturan ketat yang tidak dapat dinegosiasikan (*non-negotiable
 
 ```mermaid
 flowchart TD
-    subgraph S["Autonomous Runner Loop (scheduler/autonomous_runner.py)"]
+    subgraph S["Autonomous Runner & Dashboard (dashboard/app.py)"]
         A1[Scan Open Positions] --> A2{position_monitor.py}
         A2 -- Take Profit / Stop Loss --> A3[Liquidate / Close Position]
         A2 -- Healthy --> A4[Hold Position]
@@ -37,7 +37,7 @@ flowchart TD
         B2 -->|Candidate Symbol| C1(data/market_fetcher.py)
         C1 -->|Daily OHLCV Bars| C2(analysis/regime_detector.py)
         C2 -->|Indicators & MarketRegime| C3(agent/strategy_agent.py)
-        C3 -->|TradeIntent JSON| C4{risk/risk_gate.py}
+        C3 -->|TradeIntent JSON (Gemini 2.5 Flash)| C4{risk/risk_gate.py}
         C4 -- Rejected --> C5[Log Rejection Reason]
         C4 -- Approved --> C6(execution/alpaca_executor.py)
         C6 -->|OCC Symbol / Order| C7[Alpaca Trading API]
@@ -72,8 +72,9 @@ flowchart TD
   - Menghitung indikator teknikal murni (`pandas` + `numpy`): `SMA 20/50`, `RSI 14`, `ATR 14`, `Realized Volatility %`, `Bollinger Bandwidth %`.
   - Mengklasifikasikan regim pasar dan menghasilkan payload `summary_dict` untuk diinjeksikan ke prompt AI.
 
-### E. Folder `agent/`: AI Strategy Agent
+### E. Folder `agent/`: AI Strategy Agent (Google Gemini)
 - **[`agent/strategy_agent.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/agent/strategy_agent.py)**:
+  - Menggunakan SDK resmi `google-genai` dengan model default `gemini-2.5-flash`.
   - Memandu LLM merumuskan strategi berbasis regime:
     - **`BULLISH_TRENDING`**: *Bull Call Spread*, *Long Call*, atau *Long Equity*.
     - **`BEARISH_TRENDING`**: *Bear Put Spread* atau *Long Put*.
@@ -97,15 +98,24 @@ flowchart TD
     3. Pindai watchlist simbol (`SPY`, `AAPL`, `NVDA`, `QQQ`, `MSFT`) yang belum memiliki posisi aktif.
     4. Jalankan pipeline lengkap (Data $\rightarrow$ Regime $\rightarrow$ Strategy $\rightarrow$ Risk Gate $\rightarrow$ Execute).
 
+### H. Folder `dashboard/`: Interactive Streamlit Web UI
+- **[`dashboard/app.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/dashboard/app.py)**:
+  - Dashboard modern dengan tema dark glassmorphism.
+  - Menampilkan KPI bar akun, Market Regime Radar interaktif, kartu Explainable AI, pemantauan posisi & risiko, serta kontrol eksekusi otonom.
+
 ---
 
 ## 5. Struktur Direktori Lengkap
 
 ```text
 ALPACA AI Trading/
-├── .env                        # Konfigurasi API Key Alpaca & Environment
+├── .env                        # Konfigurasi API Key Alpaca & Gemini API
+├── .env.example                # Template konfigurasi environment yang aman
+├── .gitignore                  # Konfigurasi proteksi file secrets & temporary
 ├── PROJECT_RULES.md            # Aturan non-negotiable arsitektur sistem
 ├── PROJECT_SUMMARY.md          # Dokumen ringkasan lengkap ini
+├── README.md                   # Dokumentasi resmi repositori
+├── requirements.txt            # Dependensi proyek
 │
 ├── schemas/
 │   ├── __init__.py
@@ -125,7 +135,7 @@ ALPACA AI Trading/
 │
 ├── agent/
 │   ├── __init__.py
-│   └── strategy_agent.py       # AI Prompt Generator & LLM Strategy Synthesizer
+│   └── strategy_agent.py       # AI Prompt Generator & Gemini Strategy Synthesizer
 │
 ├── execution/
 │   ├── __init__.py
@@ -136,6 +146,10 @@ ALPACA AI Trading/
 │   ├── __init__.py
 │   └── autonomous_runner.py    # Autonomous Watchlist Scan & Continuous Runner Loop
 │
+├── dashboard/
+│   ├── __init__.py
+│   └── app.py                  # Interactive Streamlit Web UI & Explainability Dashboard
+│
 ├── test_modules.py             # Test Suite Section 1 (Schemas & Risk Gate)
 ├── test_market_analysis.py     # Test Suite Section 2 (Market Data & Regime Detection)
 ├── test_pipeline_e2e.py        # Test Suite Section 3 (End-to-End Multi-Step Pipeline)
@@ -144,21 +158,8 @@ ALPACA AI Trading/
 
 ---
 
-## 6. Matriks Hasil Pengujian Otomatis (Test Verification Matrix)
-
-| Test Script | Skenario yang Diuji | Status | Catatan / Hasil |
-| :--- | :--- | :---: | :--- |
-| **`test_modules.py`** | Serialisasi Pydantic `TradeIntent` | **PASS** | Validasi skema berhasil, format JSON sempurna. |
-| | Blokir Opsi tanpa Legs & Naked Short | **PASS** | Aturan *Defined Risk* berhasil memblokir opsi berbahaya. |
-| | Aturan 5% Alokasi Ekuitas | **PASS** | Order $22,000 pada akun $100,000 ditolak (melebihi limit 5%). |
-| **`test_market_analysis.py`** | Data Fetching OHLCV Bars | **PASS** | 60 daily bars berhasil diambil dan diformat ke DataFrame. |
-| | Kalkulasi Indikator Teknikal & Regime | **PASS** | SMA20/50, RSI14, ATR14, Realized Volatility dihitung akurat. |
-| **`test_pipeline_e2e.py`** | Pipeline Multi-Simbol (SPY, AAPL, NVDA) | **PASS** | Data $\rightarrow$ Regime $\rightarrow$ AI Strategy $\rightarrow$ Risk Gate $\rightarrow$ Executor. |
-| **`test_runner.py`** | Position Monitor & Auto-Exit | **PASS** | `AAPL` (+55%) dieksekusi TAKE_PROFIT, `TSLA` (-45%) dieksekusi STOP_LOSS, `SPY` (+12%) di-HOLD. |
-| | Autonomous Watchlist Orchestration | **PASS** | Watchlist dipindai, alokasi portofolio diisi hingga batas kapasitas. |
-
----
-
-## 7. Catatan Teknis Lingkungan (Environment Notes)
-1. **Konektivitas ISP**: Di wilayah Indonesia, domain API `paper-api.alpaca.markets` dan `data.alpaca.markets` terblokir oleh DNS ISP lokal (*Internet Positif*). Untuk menjalankan bot trading secara live, disarankan mengaktifkan **Cloudflare WARP (1.1.1.1)**, **VPN**, atau mengonfigurasi **DNS-over-HTTPS (DoH)**.
-2. **Dependensi**: `alpaca-py`, `pydantic`, `pandas`, `numpy`, `openai`, `python-dotenv`.
+## 6. Cara Menjalankan Dashboard
+```bash
+streamlit run dashboard/app.py
+```
+Akses di browser pada: `http://localhost:8501`.
