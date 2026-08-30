@@ -3,163 +3,147 @@
 
 ---
 
-## 1. Ikhtisar Proyek (Project Overview)
-Proyek ini membangun sistem trading kuantitatif terotomatisasi berbasis AI yang mengintegrasikan analisis data pasar historis, klasifikasi *market regime* (regim pasar), perumusan strategi trading oleh Large Language Model (LLM Google Gemini 2.5 Flash), gerbang risiko deterministik (*Hard Risk Gate*), eksekusi order ke broker **Alpaca Paper Trading**, manajemen posisi & *exit engine* otomatis, orkestrasi *autonomous runner* loop, serta **Interactive Streamlit Web Dashboard**.
+## 1. Project Overview & Hackathon Alignment
+This project is an institutional-grade autonomous AI algorithmic trading agent built for the **Alpaca AI Trading Agents Hackathon on LabLab.ai**.
 
-Sistem dirancang dengan arsitektur **multi-step pipeline terisolasi** di mana kecerdasan buatan (LLM) **tidak pernah mengeksekusi order secara langsung**, melainkan hanya bertindak sebagai perumus proposal order terstruktur dalam format JSON yang wajib melewati validasi skema dan aturan gerbang risiko 100% deterministik.
-
----
-
-## 2. Guardrails & Strict Rules (`PROJECT_RULES.md`)
-Sistem tunduk pada aturan ketat yang tidak dapat dinegosiasikan (*non-negotiable safety guardrails*):
-
-1. **AI Output Isolate**: LLM HANYA menghasilkan proposal berformat JSON tervalidasi skema Pydantic (`TradeIntent`). LLM tidak memiliki akses langsung untuk menempatkan order ke broker.
-2. **Deterministic Hard Risk Gate**: Modul `RiskGate` adalah 100% kode Python deterministik murni tanpa intervensi AI. Modul ini mengevaluasi:
-   - Alokasi biaya/risiko per posisi $\le 5\%$ dari total *equity* akun Alpaca.
-   - Ketersediaan *buying power* / kas.
-   - Kewajaran *stop-loss* dan *target price*.
-   - Larangan keras terhadap *naked short options* (setiap posisi *sell* opsi wajib memiliki kaki proteksi *buy* / *defined risk*).
-3. **Regime-Aware Strategy Mapping**: Setiap keputusan order (Opsi / Ekuitas) disesuaikan secara dinamis dengan regim pasar yang terdeteksi.
+The system addresses the hackathon's core technology requirements:
+- **Alpaca Trading API**: For real-time and historical market data, equities, options chains, and order execution.
+- **Alpaca MCP (Model Context Protocol) Server**: Exposing quantitative trading tools for agentic workflows and multi-agent interaction.
+- **Alpaca CLI & Interactive Dashboard**: Providing programmatic command-line control and an auditable web interface.
+- **Production-Style Quantitative Architecture**: Moving beyond simple demos to implement multi-regime technical classification, Gemini quantitative reasoning, a 100% deterministic mathematical risk gate, and an automated position lifecycle monitor.
 
 ---
 
-## 3. Diagram Alur Sistem (End-to-End Pipeline)
+## 2. Strict Guardrails & Core Rules (`PROJECT_RULES.md`)
+1. **AI Output Isolation**: The LLM never places broker orders directly. It only outputs structured JSON proposals validated by Pydantic (`TradeIntent`).
+2. **Deterministic Hard Risk Gate**: 100% deterministic Python rules evaluating position size (max 5.0% total account equity), buying power, stop-loss sanity, and defined-risk options protection.
+3. **Regime-Aware Strategy Mapping**: Dynamic allocation to Bull Call Spreads, Bear Put Spreads, Iron Condors, or Range Trades based on detected market regimes.
+
+---
+
+## 3. End-to-End System Flow
 
 ```mermaid
 flowchart TD
-    subgraph S["Autonomous Runner & Dashboard (dashboard/app.py)"]
-        A1[Scan Open Positions] --> A2{position_monitor.py}
-        A2 -- Take Profit / Stop Loss --> A3[Liquidate / Close Position]
-        A2 -- Healthy --> A4[Hold Position]
-        A3 --> B1[Calculate Available Portfolio Slots]
+    subgraph S["Autonomous Execution (CLI, MCP Server, Streamlit UI)"]
+        A1[1. Position Monitor & Exit Engine] --> A2{Check Open Positions}
+        A2 -- Take Profit +50% / Stop Loss -40% --> A3[Liquidate Position]
+        A2 -- Healthy PnL --> A4[Hold Position]
+        A3 --> B1[Calculate Available Portfolio Capacity]
         A4 --> B1
         B1 --> B2[Scan Watchlist: SPY, AAPL, NVDA, QQQ, MSFT]
         B2 -->|Candidate Symbol| C1(data/market_fetcher.py)
         C1 -->|Daily OHLCV Bars| C2(analysis/regime_detector.py)
-        C2 -->|Indicators & MarketRegime| C3(agent/strategy_agent.py)
-        C3 -->|TradeIntent JSON (Gemini 2.5 Flash)| C4{risk/risk_gate.py}
-        C4 -- Rejected --> C5[Log Rejection Reason]
-        C4 -- Approved --> C6(execution/alpaca_executor.py)
-        C6 -->|OCC Symbol / Order| C7[Alpaca Trading API]
+        C2 -->|SMA, RSI, ATR, Volatility| C3(agent/strategy_agent.py)
+        C3 -->|Gemini Model Synthesis| C4[TradeIntent JSON]
+        C4 --> C5{risk/risk_gate.py}
+        C5 -- Rejected --> C6[Log Rejection & Discard]
+        C5 -- Approved --> C7(execution/alpaca_executor.py)
+        C7 -->|OCC Symbol & Order| C8[Alpaca Trading API]
     end
 ```
 
 ---
 
-## 4. Rincian Modul & Arsitektur Kode
+## 4. Module Breakdown
 
-### A. Folder `schemas/`: Kontrak Data & Validasi Pydantic
-- **[`schemas/trade_intent.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/schemas/trade_intent.py)**:
-  - **`MarketRegime`** (Enum): `BULLISH_TRENDING`, `BEARISH_TRENDING`, `SIDEWAYS_CONSOLIDATION`, `HIGH_VOLATILITY`, `LOW_VOLATILITY`.
-  - **`InstrumentType`** (Enum): `EQUITY`, `OPTION`.
-  - **`OptionLeg`** (Model): Kaki kontrak opsi (`strike_price`, `expiration_date`, `option_type` [CALL/PUT], `action` [BUY_TO_OPEN/SELL_TO_OPEN], `quantity`).
-  - **`TradeIntent`** (Model): Proposal order lengkap yang memuat `symbol`, `market_regime`, `instrument_type`, `strategy_name`, `action`, `quantity`, `estimated_entry_price`, `target_price`, `stop_loss`, `options_legs`, `reasoning`, dan `confidence_score`.
+### A. `schemas/trade_intent.py`
+Pydantic v2 schemas defining `TradeIntent`, `OptionLeg`, `MarketRegime`, and `InstrumentType` with strict validation blocking naked short options.
 
-### B. Folder `risk/`: Gerbang Risiko Deterministik
-- **[`risk/risk_gate.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/risk/risk_gate.py)**:
-  - Mengambil data akun Alpaca (`equity`, `buying_power`, `status`, `trading_blocked`).
-  - **Aturan Ukuran Posisi**: Memastikan `proposed_cost <= 0.05 * account_equity`.
-  - **Aturan Likuiditas**: Memastikan `proposed_cost <= buying_power`.
-  - **Validasi Stop-Loss**: Memastikan stop loss logis terhadap harga entry dan arah order.
+### B. `risk/risk_gate.py`
+Mathematical risk barrier enforcing:
+- Maximum 5.0% allocation of total equity per position.
+- Buying power & cash validation.
+- Stop-loss and profit target sanity relative to entry price and order side.
 
-### C. Folder `data/`: Pengambil Data Pasar
-- **[`data/market_fetcher.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/data/market_fetcher.py)**:
-  - Menggunakan `StockHistoricalDataClient` dan `OptionHistoricalDataClient` dari `alpaca-py`.
-  - Mengambil data daily bars historis (30-60 hari) dan snapshot options chain dengan fitur *synthetic fallback bar generator*.
+### C. `data/market_fetcher.py`
+Historical bar and options chain client leveraging `StockHistoricalDataClient` and `OptionHistoricalDataClient` from `alpaca-py`.
 
-### D. Folder `analysis/`: Detektor Regim & Indikator Teknikal
-- **[`analysis/regime_detector.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/analysis/regime_detector.py)**:
-  - Menghitung indikator teknikal murni (`pandas` + `numpy`): `SMA 20/50`, `RSI 14`, `ATR 14`, `Realized Volatility %`, `Bollinger Bandwidth %`.
-  - Mengklasifikasikan regim pasar dan menghasilkan payload `summary_dict` untuk diinjeksikan ke prompt AI.
+### D. `analysis/regime_detector.py`
+Deterministic technical analysis engine calculating SMA 20/50, RSI 14, ATR 14, Realized Volatility %, and Bollinger Bandwidth % across 5 market regimes.
 
-### E. Folder `agent/`: AI Strategy Agent (Google Gemini)
-- **[`agent/strategy_agent.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/agent/strategy_agent.py)**:
-  - Menggunakan SDK resmi `google-genai` dengan model default `gemini-2.5-flash`.
-  - Memandu LLM merumuskan strategi berbasis regime:
-    - **`BULLISH_TRENDING`**: *Bull Call Spread*, *Long Call*, atau *Long Equity*.
-    - **`BEARISH_TRENDING`**: *Bear Put Spread* atau *Long Put*.
-    - **`HIGH_VOLATILITY`**: *Defined-Risk Iron Condor* atau *Credit Spreads*.
-    - **`SIDEWAYS_CONSOLIDATION` / `LOW_VOLATILITY`**: *Range-Bound Swing Trade* atau *Defined-Risk Spreads*.
+### E. `agent/strategy_agent.py`
+Google Gemini quantitative prompt engine with structured JSON output, automatic date context injection, and model failover support.
 
-### F. Folder `execution/`: Engine Eksekusi & Pemantau Posisi
-- **[`execution/alpaca_executor.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/execution/alpaca_executor.py)**:
-  - Format simbol opsi standar **OCC Option Symbol** (misal: `SPY260927C00688000`).
-  - Mengirim order ekuitas dan opsi multi-leg ke Alpaca Paper API.
-- **[`execution/position_monitor.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/execution/position_monitor.py)**:
-  - Memantau seluruh posisi terbuka secara real-time.
-  - Mengevaluasi unrealized P&L (% dan nominal).
-  - Melakukan auto-liquidate ketika profit menyentuh target (+50%) atau stop loss (-40%).
+### F. `execution/alpaca_executor.py` & `execution/position_monitor.py`
+OCC Option Symbol formatter (`TICKER + YYMMDD + C/P + STRIKE`), order submission engine, and active position lifecycle monitor with +50% Take Profit / -40% Stop Loss automation.
 
-### G. Folder `scheduler/`: Autonomous Runner
-- **[`scheduler/autonomous_runner.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/scheduler/autonomous_runner.py)**:
-  - Loop orkestrasi otomatis:
-    1. Scan posisi terbuka & eksekusi Exit Signal jika tercapai.
-    2. Cek kapasitas portofolio dan *buying power*.
-    3. Pindai watchlist simbol (`SPY`, `AAPL`, `NVDA`, `QQQ`, `MSFT`) yang belum memiliki posisi aktif.
-    4. Jalankan pipeline lengkap (Data $\rightarrow$ Regime $\rightarrow$ Strategy $\rightarrow$ Risk Gate $\rightarrow$ Execute).
+### G. `scheduler/autonomous_runner.py`
+Continuous orchestrator scanning watchlists, checking portfolio slots, and executing full cycles.
 
-### H. Folder `dashboard/`: Interactive Streamlit Web UI
-- **[`dashboard/app.py`](file:///c:/Users/HP/Documents/PROJECT/ALPACA%20AI%20Trading/dashboard/app.py)**:
-  - Dashboard modern dengan tema dark glassmorphism.
-  - Menampilkan KPI bar akun, Market Regime Radar interaktif, kartu Explainable AI, pemantauan posisi & risiko, serta kontrol eksekusi otonom.
+### H. `mcp_server/server.py`
+Model Context Protocol tool server exposing 7 quantitative tools over standard JSON-RPC protocol.
+
+### I. `cli.py`
+Interactive command-line interface for running scans, checking regimes, generating strategies, and inspecting positions.
+
+### J. `dashboard/app.py`
+Streamlit execution dashboard featuring live KPI metrics, Market Regime Radar with Plotly charts, Explainable AI reasoning logs, and active position monitors.
 
 ---
 
-## 5. Struktur Direktori Lengkap
+## 5. Directory Structure
 
 ```text
 ALPACA AI Trading/
-├── .env                        # Konfigurasi API Key Alpaca & Gemini API
-├── .env.example                # Template konfigurasi environment yang aman
-├── .gitignore                  # Konfigurasi proteksi file secrets & temporary
-├── PROJECT_RULES.md            # Aturan non-negotiable arsitektur sistem
-├── PROJECT_SUMMARY.md          # Dokumen ringkasan lengkap ini
-├── README.md                   # Dokumentasi resmi repositori
-├── requirements.txt            # Dependensi proyek
+├── .env.example
+├── .gitignore
+├── PROJECT_RULES.md
+├── PROJECT_SUMMARY.md
+├── README.md
+├── requirements.txt
+├── cli.py
 │
 ├── schemas/
 │   ├── __init__.py
-│   └── trade_intent.py         # Skema Pydantic v2 TradeIntent & OptionLeg
+│   └── trade_intent.py
 │
 ├── risk/
 │   ├── __init__.py
-│   └── risk_gate.py            # Hard Risk Gate 100% deterministik (5% limit, BP, dsb.)
+│   └── risk_gate.py
 │
 ├── data/
 │   ├── __init__.py
-│   └── market_fetcher.py       # Client pengambil data historis & options chain Alpaca
+│   └── market_fetcher.py
 │
 ├── analysis/
 │   ├── __init__.py
-│   └── regime_detector.py      # Kalkulasi SMA/RSI/ATR & Klasifikasi Market Regime
+│   └── regime_detector.py
 │
 ├── agent/
 │   ├── __init__.py
-│   └── strategy_agent.py       # AI Prompt Generator & Gemini Strategy Synthesizer
+│   └── strategy_agent.py
 │
 ├── execution/
 │   ├── __init__.py
-│   ├── alpaca_executor.py      # Alpaca Order Execution & OCC Symbol Formatter
-│   └── position_monitor.py     # Position Monitor, Unrealized P&L & Auto-Exit Engine
+│   ├── alpaca_executor.py
+│   └── position_monitor.py
 │
 ├── scheduler/
 │   ├── __init__.py
-│   └── autonomous_runner.py    # Autonomous Watchlist Scan & Continuous Runner Loop
+│   └── autonomous_runner.py
+│
+├── mcp_server/
+│   ├── __init__.py
+│   └── server.py
 │
 ├── dashboard/
 │   ├── __init__.py
-│   └── app.py                  # Interactive Streamlit Web UI & Explainability Dashboard
+│   └── app.py
 │
-├── test_modules.py             # Test Suite Section 1 (Schemas & Risk Gate)
-├── test_market_analysis.py     # Test Suite Section 2 (Market Data & Regime Detection)
-├── test_pipeline_e2e.py        # Test Suite Section 3 (End-to-End Multi-Step Pipeline)
-└── test_runner.py              # Test Suite Section 4 (Position Monitor & Autonomous Runner)
+├── test_modules.py
+├── test_market_analysis.py
+├── test_pipeline_e2e.py
+└── test_runner.py
 ```
 
 ---
 
-## 6. Cara Menjalankan Dashboard
-```bash
-streamlit run dashboard/app.py
-```
-Akses di browser pada: `http://localhost:8501`.
+## 6. Automated Test Verification (100% PASS)
+
+| Test Suite | Components Tested | Status |
+| :--- | :--- | :---: |
+| `test_modules.py` | Pydantic Schema Validation & Deterministic Risk Gate | **PASS** |
+| `test_market_analysis.py` | Data Fetcher, Indicator Calculations, Regime Detection | **PASS** |
+| `test_pipeline_e2e.py` | Multi-Symbol End-to-End Multi-Step Pipeline | **PASS** |
+| `test_runner.py` | Position Monitor Auto-Exit & Autonomous Watchlist Runner | **PASS** |

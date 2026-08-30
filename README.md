@@ -1,20 +1,23 @@
-# Alpaca Regime-Aware Options and Equity Trading Agent
+# Alpaca Regime-Aware Options and Equity Autonomous Trading Agent
 
-An autonomous, multi-step algorithmic trading pipeline that combines technical market regime detection, AI-formulated trade proposals, a 100% deterministic hard risk gate, automated position management, and order execution via the Alpaca Trading API.
+An autonomous, production-grade algorithmic trading system that combines technical market regime detection, Google Gemini quantitative reasoning, a 100% deterministic mathematical risk gate, Model Context Protocol (MCP) tool server, interactive CLI, and Streamlit execution telemetry dashboard via the Alpaca Trading API.
+
+Built for the Alpaca AI Trading Agents Hackathon on LabLab.ai.
 
 ---
 
-## Core Architecture and Guardrails
+## Core System Architecture & Guardrails
 
 This project enforces strict security and risk-management boundaries:
 
 1. **AI Output Isolation**: The AI/LLM never interacts with the broker or executes trades directly. It only outputs structured JSON trade proposals conforming to the strict Pydantic `TradeIntent` schema.
 2. **Deterministic Hard Risk Gate**: All proposals must pass a 100% deterministic Python risk gate before orders can be submitted:
-   - Position sizing capped at a maximum of 5% of total account equity.
+   - Position sizing capped at a maximum of 5.0% of total account equity.
    - Strict validation of available buying power and cash.
    - Defined-risk enforcement: naked short options are strictly prohibited (every short leg must be covered by a protective long leg).
    - Sanity checks on target profit and stop-loss levels relative to entry price and order direction.
 3. **Regime-Aware Strategy Mapping**: Strategies are tailored dynamically to detected market regimes (Bull Call Spreads, Bear Put Spreads, Iron Condors, and Range-bound Equity trades).
+4. **Model Context Protocol (MCP) Integration**: Official FastMCP server exposes quantitative tools for external agentic orchestration and multi-agent systems.
 
 ---
 
@@ -27,10 +30,10 @@ This project enforces strict security and risk-management boundaries:
 [ Technical Regime Detector ] (SMA 20/50, RSI 14, ATR 14, Realized Volatility)
          |
          v
-[ AI Strategy Agent ] (Formulates TradeIntent JSON proposal)
+[ AI Strategy Agent ] (Google Gemini Model -> Formulates TradeIntent JSON proposal)
          |
          v
-[ Deterministic Hard Risk Gate ] (5% Equity Cap, Buying Power, Defined Risk)
+[ Deterministic Hard Risk Gate ] (5.0% Equity Cap, Buying Power, Defined Risk)
          |
          +--> [ Rejected ] -> Log & Discard
          |
@@ -39,6 +42,9 @@ This project enforces strict security and risk-management boundaries:
          |
          v
 [ Position Monitor & Exit Engine ] (Monitors Unrealized PnL, Auto Take-Profit / Stop-Loss)
+         |
+         v
+[ Telemetry & Visualization ] (Streamlit Dashboard, CLI, & MCP Server)
 ```
 
 ---
@@ -52,6 +58,8 @@ ALPACA AI Trading/
 ├── PROJECT_RULES.md            # Non-negotiable architectural rules
 ├── PROJECT_SUMMARY.md          # Comprehensive technical report
 ├── README.md                   # Project documentation
+├── requirements.txt            # Project dependencies
+├── cli.py                      # Interactive Command-Line Interface (Alpaca CLI)
 │
 ├── schemas/
 │   ├── __init__.py
@@ -71,7 +79,7 @@ ALPACA AI Trading/
 │
 ├── agent/
 │   ├── __init__.py
-│   └── strategy_agent.py       # AI prompt engine & regime strategy synthesizer
+│   └── strategy_agent.py       # Google Gemini AI prompt engine & regime strategy synthesizer
 │
 ├── execution/
 │   ├── __init__.py
@@ -81,6 +89,14 @@ ALPACA AI Trading/
 ├── scheduler/
 │   ├── __init__.py
 │   └── autonomous_runner.py    # Autonomous watchlist scanner & continuous loop runner
+│
+├── mcp_server/
+│   ├── __init__.py
+│   └── server.py               # Model Context Protocol (MCP) tool server
+│
+├── dashboard/
+│   ├── __init__.py
+│   └── app.py                  # Streamlit execution dashboard & explainability UI
 │
 ├── test_modules.py             # Unit tests for Schemas and RiskGate
 ├── test_market_analysis.py     # Tests for Market Data Fetcher and Regime Detector
@@ -95,6 +111,7 @@ ALPACA AI Trading/
 ### 1. Prerequisites
 - Python 3.11 or higher
 - Alpaca Trading account (Paper or Live)
+- Google Gemini API Key
 
 ### 2. Clone Repository and Set Up Virtual Environment
 
@@ -114,7 +131,6 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
-*(Or install core dependencies directly: `pip install alpaca-py pydantic pandas numpy openai python-dotenv`)*
 
 ### 4. Configure Environment Variables
 
@@ -130,53 +146,60 @@ Edit `.env` with your credentials:
 ALPACA_API_KEY=your_alpaca_api_key_here
 ALPACA_SECRET_KEY=your_alpaca_secret_key_here
 ALPACA_PAPER=True
-OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ---
 
-## Running Automated Tests
+## Usage: CLI, Web Dashboard, and MCP Server
 
-Run the complete test suite to verify all modules:
+### 1. Interactive Command Line Interface (CLI)
 
 ```bash
-# 1. Test Pydantic Schemas & Deterministic Risk Gate
-python test_modules.py
+# Run autonomous watchlist scan
+python cli.py scan --symbols SPY,AAPL,NVDA,QQQ,MSFT --max-pos 5
 
-# 2. Test Market Data Fetching & Regime Detection
-python test_market_analysis.py
+# Inspect market regime and technical indicators for a ticker
+python cli.py regime SPY
 
-# 3. Test End-to-End Multi-Step Pipeline
-python test_pipeline_e2e.py
+# Generate AI trade strategy proposal via Gemini
+python cli.py strategy AAPL
 
-# 4. Test Position Monitor & Autonomous Runner
-python test_runner.py
+# Inspect open positions and exit status
+python cli.py positions
+
+# Run full test suite
+python cli.py test
+
+# Launch MCP Tool Server
+python cli.py mcp
 ```
 
----
+### 2. Interactive Web Dashboard
 
-## Usage: Running the Autonomous Trading Agent
-
-To run a single cycle scan across the watchlist:
-
-```python
-from scheduler.autonomous_runner import AutonomousRunner
-
-runner = AutonomousRunner(
-    watchlist=["SPY", "AAPL", "NVDA", "QQQ", "MSFT"],
-    max_open_positions=5,
-    dry_run=True,  # Set to False for live paper execution
-)
-
-report = runner.run_iteration()
-print(report)
+```bash
+streamlit run dashboard/app.py
 ```
+Open `http://localhost:8501` to view:
+- Live Account KPI Bar (Equity, Buying Power, Cash, Positions).
+- Market Regime Radar & Plotly Technical Candlestick Charts.
+- Explainable AI Reasoning & Risk Gate Audit Trail.
+- Active Positions & Take-Profit / Stop-Loss Progress.
 
-To run continuously as a scheduled background daemon:
+### 3. Model Context Protocol (MCP) Server
 
-```python
-runner.run_loop(max_iterations=None)
+```bash
+python -m mcp_server.server
 ```
+Exposes tools over standard MCP JSON-RPC protocol:
+- `detect_market_regime`
+- `get_account_risk_summary`
+- `evaluate_risk_gate`
+- `generate_ai_strategy`
+- `execute_alpaca_order`
+- `monitor_and_liquidate_positions`
+- `run_autonomous_pipeline`
 
 ---
 
@@ -189,6 +212,19 @@ runner.run_loop(max_iterations=None)
 | HIGH_VOLATILITY | Iron Condor / Credit Spread | OPTION | Defined Risk (Wing-Protected) |
 | SIDEWAYS_CONSOLIDATION | Range Swing Trade | EQUITY / OPTION | Defined Risk (Channel Bounds) |
 | LOW_VOLATILITY | Range Trade / Squeeze Breakout | EQUITY / OPTION | Defined Risk (Tight Stop Loss) |
+
+---
+
+## Automated Test Verification
+
+Run all test suites:
+
+```bash
+python test_modules.py
+python test_market_analysis.py
+python test_pipeline_e2e.py
+python test_runner.py
+```
 
 ---
 

@@ -110,21 +110,26 @@ class StrategyAgent:
 
         # 1. Try LLM Generation via Google Gemini if client available
         if self.client and types:
-            try:
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=STRATEGY_SYSTEM_PROMPT,
-                        temperature=0.2,
-                        response_mime_type="application/json",
-                    ),
-                )
-                raw_content = response.text
-                if raw_content:
-                    return self._parse_and_validate_json(raw_content)
-            except Exception as e:
-                print(f"[StrategyAgent] Google GenAI API call error ({e}). Engaging deterministic fallback generator...")
+            candidate_models = [self.model_name]
+            if "gemini-3.6-flash" not in candidate_models:
+                candidate_models.append("gemini-3.6-flash")
+
+            for m in candidate_models:
+                try:
+                    response = self.client.models.generate_content(
+                        model=m,
+                        contents=user_prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=STRATEGY_SYSTEM_PROMPT,
+                            temperature=0.2,
+                            response_mime_type="application/json",
+                        ),
+                    )
+                    raw_content = response.text
+                    if raw_content:
+                        return self._parse_and_validate_json(raw_content)
+                except Exception as e:
+                    print(f"[StrategyAgent] Model '{m}' API error ({e}). Trying next fallback...")
 
         # 2. Resilient Deterministic Strategy Generator (Guaranteed valid TradeIntent)
         return self._generate_deterministic_proposal(summary_dict)

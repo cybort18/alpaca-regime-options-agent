@@ -95,6 +95,25 @@ class AutonomousRunner:
         rejected_proposals = []
         skipped_symbols = []
 
+        # Resolve active account
+        account = account_override
+        if not account:
+            try:
+                account = self.gate.get_account()
+            except Exception as e:
+                if self.dry_run:
+                    from dataclasses import dataclass
+                    @dataclass
+                    class AccountSnapshot:
+                        equity: float = 100_000.0
+                        buying_power: float = 200_000.0
+                        cash: float = 50_000.0
+                        status: str = "ACTIVE"
+                        trading_blocked: bool = False
+                    account = AccountSnapshot()
+                else:
+                    account = None
+
         for symbol in self.watchlist:
             clean_symbol = symbol.strip().upper()
 
@@ -124,7 +143,7 @@ class AutonomousRunner:
                 print(f"             Proposed: {intent.strategy_name} ({intent.instrument_type.value}) - Qty: {intent.quantity}")
 
                 # Step 4: Risk Gate Validation
-                risk_res = self.gate.evaluate(intent, account_override=account_override)
+                risk_res = self.gate.evaluate(intent, account_override=account)
                 if not risk_res.is_approved:
                     print(f"             [X] Risk Gate REJECTED: {risk_res.rejection_reasons}")
                     rejected_proposals.append({
