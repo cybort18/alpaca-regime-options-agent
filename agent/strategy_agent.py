@@ -82,7 +82,7 @@ class StrategyAgent:
         api_key: Optional[str] = None,
     ):
         load_dotenv()
-        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
 
         self.client = None
