@@ -1,6 +1,14 @@
 import os
+import sys
 import json
+from pathlib import Path
 from datetime import datetime, date
+
+# Ensure project root is in sys.path regardless of execution CWD
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -93,18 +101,30 @@ fetcher, detector, agent, gate, executor, monitor = get_pipeline_components()
 # -----------------------------------------------------------------------------
 # Live Account Data & Fallback
 # -----------------------------------------------------------------------------
+from dataclasses import dataclass
+
+@dataclass
+class AccountSnapshot:
+    equity: float = 100_000.0
+    buying_power: float = 200_000.0
+    cash: float = 50_000.0
+    status: str = "ACTIVE"
+    trading_blocked: bool = False
+
 try:
     account = gate.get_account()
     equity = float(account.equity)
     buying_power = float(account.buying_power)
     cash = float(account.cash)
     status = str(account.status).upper()
+    active_account = account
     is_live_account = True
 except Exception:
     # Graceful Offline / Paper Mock Mode
-    equity = 100_000.00
-    buying_power = 200_000.00
-    cash = 50_000.00
+    active_account = AccountSnapshot()
+    equity = active_account.equity
+    buying_power = active_account.buying_power
+    cash = active_account.cash
     status = "ACTIVE (PAPER SIMULATION)"
     is_live_account = False
 
@@ -144,7 +164,7 @@ with st.sidebar:
                 executor=executor,
                 monitor=monitor,
             )
-            report = runner.run_iteration()
+            report = runner.run_iteration(account_override=active_account)
             st.session_state.latest_cycle_report = report
 
             # Update Audit History
