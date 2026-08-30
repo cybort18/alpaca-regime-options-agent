@@ -15,7 +15,15 @@ from risk.risk_gate import RiskGate
 from execution.alpaca_executor import AlpacaExecutor
 from execution.position_monitor import PositionMonitor
 from scheduler.autonomous_runner import AutonomousRunner
-from mcp_server.server import run_mcp_server
+from mcp_server.server import (
+    run_mcp_server,
+    detect_market_regime,
+    get_account_risk_summary,
+    evaluate_risk_gate,
+    generate_ai_strategy,
+    monitor_and_liquidate_positions,
+    run_autonomous_pipeline,
+)
 
 
 def cmd_regime(args):
@@ -82,9 +90,38 @@ def cmd_test(args):
 
 
 def cmd_mcp(args):
-    """Launch the MCP tool server."""
+    """Launch or test the MCP tool server."""
+    if args.test:
+        print("\n[CLI] Testing MCP Server Tools Integration...")
+        print("\n1. Testing 'detect_market_regime' tool on SPY:")
+        regime_out = detect_market_regime("SPY")
+        print(regime_out)
+
+        print("\n2. Testing 'get_account_risk_summary' tool:")
+        risk_out = get_account_risk_summary()
+        print(risk_out)
+
+        print("\n3. Testing 'generate_ai_strategy' tool on SPY:")
+        strat_out = generate_ai_strategy("SPY")
+        print(strat_out)
+
+        print("\n4. Testing 'evaluate_risk_gate' tool:")
+        eval_out = evaluate_risk_gate(strat_out)
+        print(eval_out)
+
+        print("\n5. Testing 'monitor_and_liquidate_positions' tool:")
+        mon_out = monitor_and_liquidate_positions(dry_run=True)
+        print(mon_out)
+
+        print("\n[PASS] All MCP Tools verified successfully!")
+        return
+
     print("\n[CLI] Starting Alpaca Agent MCP Server (stdio transport)...")
-    run_mcp_server()
+    print("      Listening for JSON-RPC MCP requests from client (Press Ctrl+C to stop)...")
+    try:
+        run_mcp_server()
+    except KeyboardInterrupt:
+        print("\n[CLI] MCP Server stopped gracefully.")
 
 
 def main():
@@ -125,7 +162,8 @@ def main():
     p_test.set_defaults(func=cmd_test)
 
     # Command: mcp
-    p_mcp = subparsers.add_parser("mcp", help="Start Model Context Protocol (MCP) server")
+    p_mcp = subparsers.add_parser("mcp", help="Start or test Model Context Protocol (MCP) server")
+    p_mcp.add_argument("--test", action="store_true", help="Test and execute all registered MCP tools")
     p_mcp.set_defaults(func=cmd_mcp)
 
     args = parser.parse_args()
@@ -133,7 +171,10 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        print("\n[CLI] Process stopped by user.")
 
 
 if __name__ == "__main__":

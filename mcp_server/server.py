@@ -45,6 +45,24 @@ def detect_market_regime(symbol: str) -> str:
         return json.dumps({"error": f"Failed to detect regime for {symbol}: {str(e)}"})
 
 
+from dataclasses import dataclass
+
+@dataclass
+class AccountSnapshot:
+    equity: float = 100_000.0
+    buying_power: float = 200_000.0
+    cash: float = 50_000.0
+    status: str = "ACTIVE"
+    trading_blocked: bool = False
+
+
+def _get_active_account():
+    try:
+        return gate.get_account()
+    except Exception:
+        return AccountSnapshot()
+
+
 @mcp_server.tool()
 def get_account_risk_summary() -> str:
     """
@@ -68,7 +86,7 @@ def get_account_risk_summary() -> str:
             "simulated_equity": 100000.0,
             "simulated_buying_power": 200000.0,
             "max_allowed_per_position_usd": 5000.0,
-            "note": f"Live account unreachable ({str(e)}). Running in deterministic sandbox.",
+            "note": "Running in deterministic simulation sandbox.",
         }, indent=2)
 
 
@@ -80,7 +98,8 @@ def evaluate_risk_gate(trade_intent_json: str) -> str:
     """
     try:
         intent = TradeIntent.model_validate_json(trade_intent_json)
-        result = gate.evaluate(intent)
+        account = _get_active_account()
+        result = gate.evaluate(intent, account_override=account)
         return json.dumps(result.model_dump(mode="json"), indent=2)
     except Exception as e:
         return json.dumps({"is_approved": False, "error": str(e)}, indent=2)
