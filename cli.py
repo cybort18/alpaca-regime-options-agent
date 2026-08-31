@@ -67,6 +67,20 @@ def cmd_scan(args):
     print(json.dumps(report, indent=2))
 
 
+def cmd_daemon(args):
+    """Run continuous autonomous trading daemon loop."""
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    dry_run = not args.live
+    
+    runner = AutonomousRunner(
+        watchlist=symbols,
+        max_open_positions=args.max_pos,
+        scan_interval_seconds=args.interval,
+        dry_run=dry_run,
+    )
+    runner.run_loop(interval_seconds=args.interval, max_iterations=args.iterations)
+
+
 def cmd_positions(args):
     """Inspect all open positions and evaluate profit-target / stop-loss exits."""
     print(f"\n[CLI] Fetching and Evaluating Active Positions...")
@@ -132,11 +146,20 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Command: scan
-    p_scan = subparsers.add_parser("scan", help="Run autonomous scan cycle across watchlist")
+    p_scan = subparsers.add_parser("scan", help="Run single autonomous scan cycle across watchlist")
     p_scan.add_argument("--symbols", default="SPY,AAPL,NVDA,QQQ,MSFT", help="Comma-separated ticker watchlist")
     p_scan.add_argument("--max-pos", type=int, default=5, help="Maximum concurrent positions")
     p_scan.add_argument("--live", action="store_true", help="Execute live paper orders (disables dry-run)")
     p_scan.set_defaults(func=cmd_scan)
+
+    # Command: daemon
+    p_daemon = subparsers.add_parser("daemon", help="Run continuous background autonomous trading loop")
+    p_daemon.add_argument("--symbols", default="SPY,AAPL,NVDA,QQQ,MSFT", help="Comma-separated ticker watchlist")
+    p_daemon.add_argument("--interval", type=int, default=60, help="Scan interval in seconds (default: 60)")
+    p_daemon.add_argument("--max-pos", type=int, default=5, help="Maximum concurrent positions")
+    p_daemon.add_argument("--iterations", type=int, default=None, help="Stop after N iterations (default: infinite)")
+    p_daemon.add_argument("--live", action="store_true", help="Execute live paper orders (disables dry-run)")
+    p_daemon.set_defaults(func=cmd_daemon)
 
     # Command: regime
     p_regime = subparsers.add_parser("regime", help="Analyze market regime for a ticker")
@@ -147,7 +170,7 @@ def main():
     # Command: strategy
     p_strat = subparsers.add_parser("strategy", help="Generate AI trade proposal for a ticker")
     p_strat.add_argument("symbol", help="Ticker symbol (e.g. SPY, AAPL)")
-    p_strat.add_argument("--model", default="gemini-2.5-flash", help="Gemini model name")
+    p_strat.add_argument("--model", default="gemini-3.6-flash", help="Gemini model name")
     p_strat.set_defaults(func=cmd_strategy)
 
     # Command: positions

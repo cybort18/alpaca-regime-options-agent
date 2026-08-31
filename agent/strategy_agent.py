@@ -2,7 +2,7 @@ import json
 import os
 import re
 from datetime import date, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
 from schemas.trade_intent import (
@@ -97,14 +97,26 @@ class StrategyAgent:
         """
         Formulate a TradeIntent proposal based on technical indicators and market regime.
         """
+        from data.market_fetcher import MarketDataFetcher
+        fetcher = MarketDataFetcher()
+
+        symbol = summary_dict.get("symbol", "SPY").strip().upper()
+        last_price = float(summary_dict.get("last_price", 500.0))
         today_str = date.today().isoformat()
-        target_exp_str = (date.today() + timedelta(days=30)).isoformat()
+        
+        valid_fridays = fetcher.get_valid_option_expirations(symbol, count=4)
+        valid_strikes = fetcher.get_valid_strikes(last_price)
         prompt_input = json.dumps(summary_dict, indent=2)
 
         user_prompt = (
             f"Today's Date: {today_str}.\n"
-            f"Target Expiration Date for Options (approx 30 days ahead): {target_exp_str}.\n"
-            f"Generate a quantitative trade proposal strictly matching TradeIntent schema for these market metrics:\n"
+            f"Underlying Asset: {symbol} (Last Price: ${last_price:.2f}).\n"
+            f"Valid Listed Friday Expiration Dates: {valid_fridays}.\n"
+            f"Standardized Strikes near ATM: {valid_strikes}.\n\n"
+            f"CRITICAL RULES:\n"
+            f"1. If proposing an OPTION, you MUST select an expiration_date strictly from the valid Friday list: {valid_fridays}.\n"
+            f"2. Use realistic standardized strike prices from or consistent with: {valid_strikes}.\n"
+            f"3. Generate a quantitative trade proposal strictly matching the TradeIntent schema for these market metrics:\n"
             f"{prompt_input}"
         )
 
@@ -132,7 +144,7 @@ class StrategyAgent:
                     print(f"[StrategyAgent] Model '{m}' API error ({e}). Trying next fallback...")
 
         # 2. Resilient Deterministic Strategy Generator (Guaranteed valid TradeIntent)
-        return self._generate_deterministic_proposal(summary_dict)
+        return self._generate_deterministic_proposal(summary_dict, valid_fridays=valid_fridays)
 
     def _parse_and_validate_json(self, raw_json_str: str) -> TradeIntent:
         """Clean markdown wrapping and validate into Pydantic TradeIntent model."""
@@ -141,12 +153,16 @@ class StrategyAgent:
         cleaned = re.sub(r"\s*```$", "", cleaned)
         return TradeIntent.model_validate_json(cleaned)
 
-    def _generate_deterministic_proposal(self, summary_dict: Dict[str, Any]) -> TradeIntent:
+    def _generate_deterministic_proposal(
+        self,
+        summary_dict: Dict[str, Any],
+        valid_fridays: Optional[List[str]] = None,
+    ) -> TradeIntent:
         """
-        Rule-based deterministic strategy synthesizer adhering strictly to PROJECT_RULES.md.
-        Used as resilient fallback or offline execution.
+        100% deterministic strategy formulation matching regime requirements.
+        Used as bulletproof fallback when LLM is unreachable or invalid.
         """
-        symbol = summary_dict.get("symbol", "SPY").upper()
+        symbol = summary_dict.get("symbol", "SPY")
         regime_str = summary_dict.get("detected_regime", MarketRegime.BULLISH_TRENDING.value)
         regime = MarketRegime(regime_str)
         last_price = float(summary_dict.get("last_price", 580.0))
@@ -154,7 +170,10 @@ class StrategyAgent:
         confidence = float(summary_dict.get("confidence_score", 0.80))
         rationale = summary_dict.get("rationale", "Deterministic regime-aligned quantitative proposal.")
 
-        exp_date = (date.today() + timedelta(days=30)).isoformat()
+        if valid_fridays and len(valid_fridays) > 1:
+            exp_date = valid_fridays[1]
+        else:
+            exp_date = (date.today() + timedelta(days=25)).isoformat()
 
         if regime == MarketRegime.BULLISH_TRENDING:
             # Bull Call Spread (Defined Risk)

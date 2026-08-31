@@ -192,22 +192,43 @@ class AutonomousRunner:
 
         return cycle_summary
 
-    def run_loop(self, max_iterations: Optional[int] = None):
+    def run_loop(
+        self,
+        interval_seconds: Optional[int] = None,
+        max_iterations: Optional[int] = None,
+    ):
         """
         Continuous daemon scheduler loop with configurable scan interval.
+        Monitors open positions, executes auto-exits, and scans for new trade setups continuously.
         """
+        interval = interval_seconds or self.scan_interval_seconds
         iteration = 0
-        print(f"Autonomous Trading Runner Loop Started. Interval = {self.scan_interval_seconds}s")
+        print(f"\n================================================================================")
+        print(f"AUTONOMOUS DAEMON RUNNER STARTED (Interval: {interval}s | Dry Run: {self.dry_run})")
+        print(f"Watchlist: {self.watchlist} | Max Positions: {self.max_open_positions}")
+        print(f"Press Ctrl+C at any time to safely stop the daemon.")
+        print(f"================================================================================")
+
         try:
             while True:
                 iteration += 1
-                print(f"\n--- Iteration #{iteration} ---")
-                self.run_iteration()
+                now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+                print(f"\n>>> [DAEMON CYCLE #{iteration}] {now_str} <<<")
+                
+                report = self.run_iteration()
 
                 if max_iterations and iteration >= max_iterations:
-                    print(f"Reached max iterations ({max_iterations}). Terminating loop.")
+                    print(f"\n[Daemon] Reached specified max iterations ({max_iterations}). Exiting daemon loop.")
                     break
 
-                time.sleep(self.scan_interval_seconds)
+                print(f"\n[Daemon] Next autonomous cycle in {interval}s. Waiting...")
+                # Responsive sleep in small steps to instantly handle Ctrl+C
+                slept = 0
+                while slept < interval:
+                    time.sleep(min(1.0, interval - slept))
+                    slept += 1.0
+
         except KeyboardInterrupt:
-            print("\nAutonomous Trading Runner gracefully stopped by user.")
+            print(f"\n\n================================================================================")
+            print(f"[Daemon] Autonomous Trading Daemon stopped gracefully after {iteration} cycles.")
+            print(f"================================================================================")
